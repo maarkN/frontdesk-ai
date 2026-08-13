@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.frontdesk.maarkn.dev/events/v1/catalog.schema.json",
+  "title": "EventCatalog",
+  "description": "Payloads tipados do catálogo de eventos v1. Um evento válido é o envelope (envelope.schema.json) cujo payload valida contra o $def correspondente ao seu `type`. stt.partial não existe neste catálogo por decisão (ADR-003): nunca vai ao bus.",
+  "oneOf": [
+    { "$ref": "#/$defs/callStarted" },
+    { "$ref": "#/$defs/callAnswered" },
+    { "$ref": "#/$defs/callEnded" },
+    { "$ref": "#/$defs/consentCaptured" },
+    { "$ref": "#/$defs/languageDetected" },
+    { "$ref": "#/$defs/languageSwitched" },
+    { "$ref": "#/$defs/nodeEntered" },
+    { "$ref": "#/$defs/nodeExited" },
+    { "$ref": "#/$defs/sttFinal" },
+    { "$ref": "#/$defs/agentTurnCompleted" },
+    { "$ref": "#/$defs/toolInvoked" },
+    { "$ref": "#/$defs/toolCompleted" },
+    { "$ref": "#/$defs/varAssigned" },
+    { "$ref": "#/$defs/dtmfReceived" },
+    { "$ref": "#/$defs/transferInitiated" },
+    { "$ref": "#/$defs/transferAnswered" },
+    { "$ref": "#/$defs/recordingStarted" },
+    { "$ref": "#/$defs/errorRaised" }
+  ],
+  "$defs": {
+    "locale": {
+      "type": "string",
+      "enum": ["en-CA", "fr-CA"]
+    },
+    "callStarted": {
+      "title": "call.started",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "mode"],
+      "properties": {
+        "from": { "type": "string", "description": "E.164 do chamador." },
+        "to": { "type": "string", "description": "DID do tenant (E.164) — resolve o tenant." },
+        "mode": {
+          "type": "string",
+          "enum": ["overflow", "always_ai"],
+          "description": "Transbordo (IA só se ninguém atender) ou sempre-IA."
+        }
+      }
+    },
+    "callAnswered": {
+      "title": "call.answered",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answeredBy"],
+      "properties": {
+        "answeredBy": { "type": "string", "enum": ["agent", "human"] },
+        "answerDelayMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "callEnded": {
+      "title": "call.ended",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "durationMs"],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": ["completed", "caller_hangup", "transferred", "voicemail", "error"]
+        },
+        "durationMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "consentCaptured": {
+      "title": "consent.captured",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["granted"],
+      "properties": {
+        "granted": { "type": "boolean" },
+        "method": { "type": "string", "enum": ["verbal", "dtmf", "continued_call"] }
+      }
+    },
+    "languageDetected": {
+      "title": "language.detected",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locale"],
+      "properties": {
+        "locale": { "$ref": "#/$defs/locale" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "languageSwitched": {
+      "title": "language.switched",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "#/$defs/locale" },
+        "to": { "$ref": "#/$defs/locale" }
+      }
+    },
+    "nodeEntered": {
+      "title": "node.entered — nodeId vai no envelope",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodeType": { "type": "string" }
+      }
+    },
+    "nodeExited": {
+      "title": "node.exited — nodeId vai no envelope",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": { "type": "string" }
+      }
+    },
+    "sttFinal": {
+      "title": "stt.final — texto já redigido; spans em redactions[] do envelope",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "locale"],
+      "properties": {
+        "text": { "type": "string", "description": "Transcrição final do turno do cliente, PII já redigida." },
+        "locale": { "$ref": "#/$defs/locale" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "audioMs": { "type": "integer", "minimum": 0, "description": "Duração de áudio transcrito (alimenta STTSeconds no usage)." },
+        "vadEndToFinalMs": { "type": "integer", "minimum": 0, "description": "Latência VAD fim de fala → STT final." }
+      }
+    },
+    "agentTurnCompleted": {
+      "title": "agent.turn.completed — text é o que o cliente OUVIU (PlayoutTracker)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "description": "Fala do agente truncada no que foi ouvido; corte por barge-in marcado com \"—\"." },
+        "interrupted": { "type": "boolean" },
+        "llmTokensIn": { "type": "integer", "minimum": 0 },
+        "llmTokensOut": { "type": "integer", "minimum": 0 },
+        "ttsChars": { "type": "integer", "minimum": 0 },
+        "latency": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vadEndToSttFinalMs": { "type": "integer", "minimum": 0 },
+            "sttFinalToLlmFirstTokenMs": { "type": "integer", "minimum": 0 },
+            "llmFirstTokenToTtsFirstChunkMs": { "type": "integer", "minimum": 0 },
+            "perceivedMs": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "toolInvoked": {
+      "title": "tool.invoked",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool"],
+      "properties": {
+        "tool": { "type": "string" },
+        "args": { "type": "object" }
+      }
+    },
+    "toolCompleted": {
+      "title": "tool.completed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "ok"],
+      "properties": {
+        "tool": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "result": { "type": "object" }
+      }
+    },
+    "varAssigned": {
+      "title": "var.assigned",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "description": "Valor já redigido quando textual." }
+      }
+    },
+    "dtmfReceived": {
+      "title": "dtmf.received",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digits"],
+      "properties": {
+        "digits": { "type": "string", "pattern": "^[0-9A-D#*]+$" }
+      }
+    },
+    "transferInitiated": {
+      "title": "transfer.initiated",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "reason"],
+      "properties": {
+        "target": { "type": "string", "description": "Destino (ex.: celular do dono, E.164)." },
+        "reason": { "type": "string", "enum": ["emergency", "keyword", "degradation", "caller_request"] }
+      }
+    },
+    "transferAnswered": {
+      "title": "transfer.answered",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target"],
+      "properties": {
+        "target": { "type": "string" },
+        "waitMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "recordingStarted": {
+      "title": "recording.started — só após consent.captured (gate PIPEDA/Lei 25)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recordingId"],
+      "properties": {
+        "recordingId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "errorRaised": {
+      "title": "error.raised",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "stage": {
+          "type": "string",
+          "description": "Degrau da escada de degradação ativo, se aplicável.",
+          "enum": ["normal", "fast", "scripted", "transfer", "voicemail"]
+        }
+      }
+    }
+  }
+}

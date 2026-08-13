@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.frontdesk.maarkn.dev/events/v1/envelope.schema.json",
+  "title": "EventEnvelope",
+  "description": "Envelope obrigatório de todo evento de negócio do FrontDesk AI (ADR-003). state = fold(events). stt.partial NUNCA vai ao bus.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "callId",
+    "seq",
+    "ts",
+    "tenantId",
+    "flowId",
+    "flowVersion",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "description": "ULID (ordenável por tempo). Chave de dedup no transporte (Nats-Msg-Id).",
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "callId": {
+      "description": "Identificador da chamada; agrupa o stream de eventos.",
+      "type": "string",
+      "minLength": 1
+    },
+    "seq": {
+      "description": "Sequência monotônica por chamada (começa em 1). Dedup e ordenação no consumidor — NATS é at-least-once e sem ordem.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "ts": {
+      "description": "Instante de emissão (RFC 3339, UTC).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "tenantId": {
+      "description": "Tenant dono da chamada. Presente em todo evento (billing = fold por tenant).",
+      "type": "string",
+      "minLength": 1
+    },
+    "flowId": {
+      "description": "Fluxo conversacional ativo.",
+      "type": "string",
+      "minLength": 1
+    },
+    "flowVersion": {
+      "description": "Versão publicada do fluxo (análise por versão, reprocessamento comparável).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "description": "Tipo do evento, um dos tipos do catálogo v1.",
+      "type": "string",
+      "enum": [
+        "call.started",
+        "call.answered",
+        "call.ended",
+        "consent.captured",
+        "language.detected",
+        "language.switched",
+        "node.entered",
+        "node.exited",
+        "stt.final",
+        "agent.turn.completed",
+        "tool.invoked",
+        "tool.completed",
+        "var.assigned",
+        "dtmf.received",
+        "transfer.initiated",
+        "transfer.answered",
+        "recording.started",
+        "error.raised"
+      ]
+    },
+    "nodeId": {
+      "description": "Nó do fluxo em que o evento ocorreu (ausente/vazio quando não se aplica).",
+      "type": "string"
+    },
+    "payload": {
+      "description": "Payload tipado por `type` — ver catalog.schema.json.",
+      "type": "object"
+    },
+    "redactions": {
+      "description": "Spans de PII redigida NA EMISSÃO sobre o texto do payload. Nenhum consumidor vê PII crua.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/redaction" }
+    }
+  },
+  "$defs": {
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "kind", "vault"],
+      "properties": {
+        "start": {
+          "description": "Offset inicial (bytes, inclusivo) do span no texto ORIGINAL.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "description": "Offset final (bytes, exclusivo) do span no texto ORIGINAL.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "Categoria da PII detectada.",
+          "type": "string",
+          "enum": ["card", "sin", "postal_code", "dob"]
+        },
+        "vault": {
+          "description": "Referência ao conteúdo original no vault (cifrado por DEK; exclusão = destruir a DEK). Vazio quando o original não foi preservado.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}
