@@ -1,0 +1,8 @@
+{{.Business}} — your AI receptionist this week
+Hi,
+
+{{if eq .CallsAnswered 0}}No calls this week. Your AI receptionist stayed on the line, ready to answer.{{else}}This week your AI receptionist answered {{.CallsAnswered}} call(s), booked {{.JobsBooked}} job(s) and took {{.Messages}} message(s).
+
+Estimated value of booked work: CAD {{printf "%.0f" .EstimatedValue}}.{{end}}
+
+— FrontDesk AI

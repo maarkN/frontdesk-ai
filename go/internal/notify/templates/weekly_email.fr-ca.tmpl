@@ -1,0 +1,8 @@
+{{.Business}} — votre réceptionniste IA cette semaine
+Bonjour,
+
+{{if eq .CallsAnswered 0}}Aucun appel cette semaine. Votre réceptionniste IA est restée en ligne, prête à répondre.{{else}}Cette semaine, votre réceptionniste IA a répondu à {{.CallsAnswered}} appel(s), planifié {{.JobsBooked}} intervention(s) et pris {{.Messages}} message(s).
+
+Valeur estimée des travaux planifiés : {{printf "%.0f" .EstimatedValue}} CAD.{{end}}
+
+— FrontDesk AI
