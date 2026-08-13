@@ -1,0 +1,65 @@
+# OpenAPI resumido do core-api (EPIC-004). Contrato completo evolui com o
+# packages/shared do dashboard; este arquivo documenta a superfície REST /v1.
+openapi: 3.0.3
+info:
+  title: FrontDesk AI — core-api
+  version: 0.1.0
+  description: >
+    API de plataforma: onboarding self-service de tenants, DIDs, chamadas
+    (projeções do stream de eventos), agendamentos, recados estruturados,
+    usage/fatura e toggle de modo de atendimento. Auth por API key por tenant
+    (Authorization: Bearer fdk_... ou X-API-Key). Chave desconhecida => 401;
+    nunca existe tenant default (ADR-005).
+security:
+  - bearerAuth: []
+paths:
+  /v1/tenants:
+    post:
+      summary: Onboarding self-service (cria tenant, chave, perfil do site, trial 14d)
+      security: []
+      responses:
+        "201": { description: "Tenant criado; apiKey exibida uma única vez" }
+        "400": { description: "Payload inválido" }
+  /v1/tenants/me:
+    get:
+      summary: Tenant autenticado
+      responses:
+        "200": { description: OK }
+        "401": { description: "API key ausente/desconhecida" }
+  /v1/tenants/me/mode:
+    put:
+      summary: Toggle transbordo / sempre-IA
+      responses:
+        "200": { description: "Tenant atualizado" }
+        "400": { description: "Modo desconhecido" }
+  /v1/dids:
+    get: { summary: Lista DIDs do tenant, responses: { "200": { description: OK } } }
+    post:
+      summary: Provisiona DID (número globalmente único)
+      responses:
+        "201": { description: Criado }
+        "409": { description: "Número já provisionado" }
+  /v1/calls:
+    get: { summary: "Lista chamadas (resumo, mais recentes primeiro)", responses: { "200": { description: OK } } }
+  /v1/calls/{callId}:
+    get:
+      summary: Detalhe da chamada (snapshot do fold com transcript + recordingUrl)
+      parameters:
+        - { name: callId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK }
+        "404": { description: "Chamada inexistente ou de outro tenant" }
+  /v1/appointments:
+    get: { summary: Lista agendamentos, responses: { "200": { description: OK } } }
+    post: { summary: Cria agendamento, responses: { "201": { description: Criado } } }
+  /v1/messages:
+    get: { summary: Lista recados estruturados, responses: { "200": { description: OK } } }
+    post: { summary: "Cria recado (quem/o quê/urgência/telefone)", responses: { "201": { description: Criado } } }
+  /v1/usage:
+    get:
+      summary: Usage do período (fold de eventos) + prévia de fatura por plano
+      responses:
+        "200": { description: OK }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: "fdk_<hex>" }
