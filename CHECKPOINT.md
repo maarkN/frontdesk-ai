@@ -21,10 +21,17 @@
   - Entregue: `specs/PRD.md` (v1.0) · `specs/epics/EPIC-001..010` · `specs/adr/ADR-001..008` ·
     `specs/README.md` (índice + grafo de dependências). Verificação cruzada ok
     (nomes de serviço, metas G1–G6, pricing, delta mobile no PRD §11 e ADR-007).
-- [ ] **Fase 2 — Backend Go + Python**
-  - `go/` (cmd/{core-api,telephony-gw,notifier}, internal/*, uber-go style, `go build ./...` verde)
-  - `python/agent-runtime/` (LangGraph, providers via Protocol, testes)
-  - `contracts/` (schemas de eventos JSON)
+- [x] **Fase 2 — Backend Go + Python** (2026-08-13)
+  - `contracts/events/v1/` (envelope + catálogo, 18 tipos) · `go/internal/{event,tenantctx}`
+    (fold determinístico, PII EN/FR na emissão, usage por fold, bus NATS + memória)
+  - `telephony-gw`: máquina do turno (4 estados, 1 goroutine/chamada), endpointing adaptativo
+    EN/FR-CA, barge-in 2 níveis, PlayoutTracker, escada de degradação, hedge LLM, circuit
+    breaker por provedor, ring buffer STT, banco de áudio, Telnyx atrás de interface
+  - `core-api`: domain + store (pgx com RLS `set LOCAL` + in-memory), billing por fold,
+    REST chi com tenant só via context; `notifier`: SMS dono/cliente EN/FR, dedup, relatório semanal
+  - `python/agent-runtime`: LangGraph (saudação→qualificação→agendamento|recado), Protocols
+    STT/LLM/TTS c/ fakes, cascata Haiku/Sonnet, guardrails + anti-injection, bridge WS/NATS
+  - Verificação: go build/vet/test verdes (16 pacotes) · pytest 44 ok · ruff/mypy strict ok
 - [ ] **Fase 3 — Frontend (web + mobile)**
   - `apps/web` (React 19 + Vite + TanStack Router/Query + Tailwind, TS strict)
   - `apps/mobile` (Expo SDK 54 + expo-router + TanStack Query)

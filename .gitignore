@@ -11,3 +11,6 @@ __pycache__/
 .ruff_cache/
 .turbo/
 coverage/
+/go/telephony-gw
+/go/core-api
+/go/notifier

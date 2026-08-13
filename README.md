@@ -10,10 +10,11 @@ negócio em modo transbordo, qualifica, agenda e notifica. Derivado das notas de
 specs/            PRD · EPICs · ADRs · CONTEXT.md (digest do domínio)
 contracts/        Schemas JSON dos eventos (contrato Go ↔ Python ↔ TS)
 go/               Serviços Go (uber-go style): cmd/{telephony-gw, core-api, notifier}
+                  + internal/{event, tenantctx, turn, media, degrade, telnyx, store,
+                  api, domain, billing, notify, audiobank}
 python/           agent-runtime (LangGraph, providers STT/LLM/TTS via Protocol)
-apps/web          Dashboard React 19 + Vite + TanStack Router/Query + Tailwind
-apps/mobile       App Expo SDK 54 + expo-router
-packages/shared   Schemas zod + client de API compartilhado (web/mobile)
+apps/             (planejado) web: React 19 + Vite + TanStack; mobile: Expo SDK 54
+packages/         (planejado) shared: schemas zod + client de API (web/mobile)
 CHECKPOINT.md     Estado das fases — leia para retomar trabalho interrompido
 ```
 
@@ -30,6 +31,6 @@ Bus: NATS JetStream (`state = fold(events)`). Banco: Postgres + Redis + S3. Obse
 
 ## Desenvolvimento
 
-- Go: `cd go && go build ./... && go test ./...`
-- Python: `cd python/agent-runtime && uv sync && uv run pytest`
-- Frontend: `pnpm install && pnpm -r typecheck`
+- Go: `cd go && go build ./... && go vet ./... && go test ./...`
+- Python: `cd python/agent-runtime && uv sync && uv run pytest && uv run ruff check . && uv run mypy src`
+- Frontend (quando existir): `pnpm install && pnpm -r typecheck`
