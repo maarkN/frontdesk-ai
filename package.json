@@ -1,0 +1,15 @@
+{
+  "name": "frontdesk-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FrontDesk AI — bilingual (EN/FR-CA) AI voice receptionist. TypeScript workspace: web dashboard, mobile app and shared API client/schemas.",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint"
+  }
+}

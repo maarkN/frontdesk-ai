@@ -1,3 +1,11 @@
 packages:
   - apps/*
   - packages/*
+
+# Expo's @expo/metro-runtime optionally peers react-dom (Expo web, unused);
+# pnpm pairs the workspace's react-dom 19.2.x with mobile's react 19.1.0.
+# Any react 19.1+ is fine there — the web app resolves 19.2.8/19.2.8 correctly.
+peerDependencyRules:
+  allowedVersions:
+    "react-dom>react": "^19.1.0"
+    "@types/react-dom>@types/react": "^19.1.0"
