@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "FrontDesk AI",
+    "slug": "frontdesk-mobile",
+    "version": "0.1.0",
+    "scheme": "frontdesk",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "ca.frontdesk.mobile",
+      "supportsTablet": false,
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"]
+      }
+    },
+    "android": {
+      "package": "ca.frontdesk.mobile",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-audio",
+      "expo-notifications"
+    ],
+    "extra": {
+      "apiBaseUrl": "http://localhost:8080"
+    }
+  }
+}
