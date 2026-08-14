@@ -32,12 +32,18 @@
   - `python/agent-runtime`: LangGraph (saudação→qualificação→agendamento|recado), Protocols
     STT/LLM/TTS c/ fakes, cascata Haiku/Sonnet, guardrails + anti-injection, bridge WS/NATS
   - Verificação: go build/vet/test verdes (16 pacotes) · pytest 44 ok · ruff/mypy strict ok
-- [ ] **Fase 3 — Frontend (web + mobile)**
-  - `apps/web` (React 19 + Vite + TanStack Router/Query + Tailwind, TS strict)
-  - `apps/mobile` (Expo SDK 54 + expo-router + TanStack Query)
-  - `packages/shared` (client de API + schemas zod)
-- [ ] **Fase 4 — Verificação e revisão**
-  - Builds/testes de todos os módulos; revisão de consistência specs ↔ código; README final.
+- [x] **Fase 3 — Frontend (web + mobile)** (2026-08-13)
+  - `packages/shared`: schemas zod espelhando o domínio Go (verificado sem drift), client
+    tipado `/v1`, i18n EN/FR · `VERSIONS.md` com versões pinadas via npm (Expo 54.0.36,
+    RN 0.81.5, React 19.1.0 mobile / 19.2.8 web, Vite 8, TS 5.9.3, zod 4, Tailwind 4)
+  - `apps/web`: login por API key, dashboard, chamadas (player + transcrição + timeline),
+    recados, agendamentos, configurações (toggle transbordo), onboarding em passos
+  - `apps/mobile`: Expo SDK 54 + expo-router (tabs Home/Calls/Messages/Settings),
+    push via expo-notifications, SecureStore, ligar de volta via tel:
+  - Nota: `pnpm install` exige Node ≥ 22 (corepack + pnpm 11); usar Node 24 (ver README)
+- [x] **Fase 4 — Verificação final** (2026-08-13)
+  - go build/vet/test verdes · pytest 44 ok · `pnpm -r typecheck` ok · vite build ok ·
+    expo-doctor 18/18 · consistência shared↔Go e specs↔código revisada.
 
 ## Como retomar
 
