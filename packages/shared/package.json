@@ -1,0 +1,22 @@
+{
+  "name": "@frontdesk/shared",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared zod schemas (mirroring the Go core-api domain), typed /v1 API client and EN/FR i18n dictionaries. Consumed by source — no build step.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas/index.ts",
+    "./api": "./src/api/client.ts",
+    "./i18n": "./src/i18n/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}
