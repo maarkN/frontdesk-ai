@@ -40,6 +40,8 @@ Atualizado em 2026-08-13.
 | [ADR-006](adr/ADR-006-degradacao-nunca-cair.md) | Degradação controlada: escada `degNormal→degVoicemail`, hedge (não retry), breaker por provedor, failover para o celular do dono | ADR-001, ADR-004 |
 | [ADR-007](adr/ADR-007-frontend-stack.md) | Frontend: monorepo pnpm, React 19 + Vite (web), Expo SDK 54 (mobile); registra o desvio "mobile no MVP" | ADR-001, ADR-002 |
 | [ADR-008](adr/ADR-008-uber-go-style.md) | Adoção integral do uber-go/guide para os serviços Go, com enforcement via golangci-lint | ADR-002 |
+| [ADR-009](adr/ADR-009-asterisk-media-backend.md) | Asterisk (22 LTS, chan_pjsip) como backend de mídia alternativo atrás das interfaces do `telephony-gw`; seleção por `MEDIA_BACKEND=telnyx\|asterisk` (Telnyx default); blue/green por app Stasis | ADR-002, ADR-004, ADR-006 |
+| [ADR-010](adr/ADR-010-observabilidade.md) | Observabilidade: slog JSON + OTel → collector → Prometheus/Loki/Tempo → Grafana como código; métricas de produto (`silence_gap_ms` p99 etc.) e alerta-ouro de degradação | ADR-002, ADR-003, ADR-006 |
 
 ## Convenções
 
