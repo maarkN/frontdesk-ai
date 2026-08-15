@@ -1,92 +1,138 @@
 # FrontDesk AI
 
-AI Voice Receptionist bilíngue (EN/FR-CA) para PMEs de serviço no Canadá — atende a linha do
-negócio em modo transbordo, qualifica, agenda e notifica. Derivado das notas de domínio em
-`Obsidian/maarkN/Voice AI/` (frente 3, incorporando os padrões da arquitetura de referência).
+**Bilingual (EN/FR-CA) AI voice receptionist for Canadian service businesses** — answers the
+business line in overflow mode, qualifies the caller, books the job and notifies the owner,
+in the caller's language.
 
-## Layout
+> Service SMBs (plumbers, electricians, HVAC — clinics as a second vertical) lose jobs because
+> nobody picks up the phone while the owner is on a job site. Voicemail doesn't convert: a caller
+> with a burst pipe dials the next result on Google Maps. FrontDesk AI answers within seconds,
+> speaks real EN **and** FR-CA (Québec's Law 96 makes French-first support a hard requirement the
+> US-first players ignore), and only steps in when a human doesn't — removing the
+> "I don't want a robot answering my customers" objection.
 
+## What it does
+
+- **Overflow-first**: the AI answers only if nobody picks up within N seconds (per-tenant),
+  with an always-on mode for after-hours. Tenants keep their existing number (Canadian DID
+  via Telnyx or ring group overlay).
+- **Qualifies and books**: service type, postal code, urgency — then books directly into the
+  owner's calendar or takes a structured message.
+- **Warm transfer on emergencies**: keyword rules ("flood", "burst pipe") ring the owner's
+  cell immediately, with context.
+- **Notifies both sides**: SMS summary to the owner in under 60 s, confirmation to the caller,
+  weekly report.
+- **Truly bilingual**: language detection on the first utterance, EN/FR-CA prompts, PII
+  handling and notifications in both languages.
+- **Never drops a call**: a degradation ladder (provider circuit breakers, LLM hedging,
+  scripted fallback, audio bank) keeps the line useful even when upstream AI providers fail.
+
+## Architecture
+
+Event-sourced core: every call emits typed events to NATS JetStream and all state — call
+timeline, billing, notifications — is a deterministic fold over that stream
+(`state = fold(events)`). The event contracts in [`contracts/`](contracts/) are the single
+source of truth shared by Go, Python and TypeScript.
+
+```mermaid
+flowchart LR
+    PSTN((Caller)) --> TX[Telnyx / Asterisk 22]
+    TX -- "call control + media WS" --> GW[telephony-gw · Go]
+    GW -- "audio in/out" --> RT[agent-runtime · Python]
+    RT --> STT[STT] & LLM[LLM cascade] & TTS[TTS]
+    GW & RT -- events --> NATS[(NATS JetStream)]
+    NATS --> API[core-api · Go]
+    NATS --> NOT[notifier · Go]
+    API --> PG[(Postgres RLS)]
+    NOT --> SMS[SMS owner/client]
+    WEB[web · React 19] & MOB[mobile · Expo] --> API
 ```
-specs/            PRD · EPICs · ADRs · CONTEXT.md (digest do domínio)
-contracts/        Schemas JSON dos eventos (contrato Go ↔ Python ↔ TS)
-go/               Serviços Go (uber-go style): cmd/{telephony-gw, core-api, notifier}
-                  + internal/{event, tenantctx, turn, media, degrade, telnyx,
-                  asterisk, store, api, domain, billing, notify, audiobank, obs}
-python/           agent-runtime (LangGraph, providers STT/LLM/TTS via Protocol)
-apps/             web: React 19 + Vite + TanStack; mobile: Expo SDK 54 + expo-router
-packages/         shared: schemas zod (espelham o domínio Go) + client /v1 + i18n EN/FR
-asterisk/         Backend de mídia próprio (ADR-009): Dockerfile + configs ARI/PJSIP
-infra/            docker/ (Dockerfiles) · k8s/ (kustomize base+overlays) ·
-                  observability/ (otel-collector, prometheus, loki, tempo, grafana)
-CHECKPOINT.md     Estado das fases — leia para retomar trabalho interrompido
-```
 
-## Serviços
-
-| Serviço | Stack | Papel |
+| Service | Stack | Role |
 |---|---|---|
-| `telephony-gw` | Go | Telnyx call control + media WS, máquina de estados do turno, barge-in |
-| `agent-runtime` | Python | LangGraph, STT/LLM/TTS streaming, guardrails, detecção EN/FR |
-| `core-api` | Go | Tenants, DIDs, chamadas, agendamentos, recados, billing (RLS por tenant) |
-| `notifier` | Go | SMS dono/cliente, relatório semanal |
+| `telephony-gw` | Go | Telnyx call control + media WebSocket, turn state machine, adaptive EN/FR endpointing, two-level barge-in, degradation ladder, per-provider circuit breakers |
+| `agent-runtime` | Python | LangGraph conversation graph (greeting → qualification → booking \| message), STT/LLM/TTS behind `Protocol`s, model cascade, guardrails + prompt-injection defense |
+| `core-api` | Go | Tenants, DIDs, calls, bookings, messages, billing — Postgres with row-level security, tenant only ever resolved from context |
+| `notifier` | Go | Owner/client SMS (EN/FR), dedup, weekly report — all folded from call events |
+| `web` / `mobile` | React 19 + Vite / Expo SDK 54 | Owner dashboard and app: call review with player + transcript + event timeline, messages, bookings, overflow toggle, onboarding |
 
-Bus: NATS JetStream (`state = fold(events)`). Banco: Postgres + Redis + S3. Observabilidade: OTel.
+Two interchangeable media backends (`MEDIA_BACKEND=telnyx|asterisk`): Telnyx-hosted media, or
+a self-hosted **Asterisk 22** container driven over ARI with external media UDP
+([ADR-009](specs/adr/ADR-009-asterisk-media-backend.md)).
 
-## Infra
+## Repository layout
 
-### Subir a stack local (docker compose)
-
-```sh
-make up                                # infra + observabilidade + serviços (backend Telnyx)
-make up PROFILES="--profile asterisk"  # inclui o Asterisk (backend de mídia próprio, ADR-009)
+```
+specs/            PRD · EPICs · ADR-001..010 · CONTEXT.md (domain digest)
+contracts/        JSON event schemas — the Go ↔ Python ↔ TS contract (18 event types)
+go/               Go services (uber-go style): cmd/{telephony-gw, core-api, notifier}
+python/           agent-runtime (LangGraph; STT/LLM/TTS providers via Protocol, incl. ElevenLabs)
+apps/             web (React 19 + Vite + TanStack) · mobile (Expo SDK 54 + expo-router)
+packages/shared   zod schemas mirroring the Go domain · typed /v1 client · EN/FR i18n
+asterisk/         Self-hosted media backend: Dockerfile + ARI/PJSIP configs
+infra/            docker/ · k8s/ (kustomize base + overlays) · observability/
+                  (otel-collector, Prometheus, Loki, Tempo, Grafana dashboards)
 ```
 
-- Web: `http://localhost:3000` · core-api: `:8080` · telephony-gw: `:8081` (host)
-- **Grafana**: `http://localhost:3001` (porta 3000 do container; o host `:3000` é o web).
-  Login default `admin`/`admin` — dashboards FrontDesk (voice health, calls funnel,
-  business) e datasources Prometheus/Loki/Tempo já provisionados.
-- Backend de mídia do `telephony-gw` via env `MEDIA_BACKEND=telnyx|asterisk` (default
-  `telnyx`). Com `asterisk`: `ASTERISK_ARI_URL` (obrigatória), `ASTERISK_APP`
-  (default `frontdesk-v1`), `ARI_USERNAME`/`ARI_PASSWORD` (mesmos nomes do entrypoint
-  do container Asterisk), `ASTERISK_TRANSFER_CONTEXT` (default `transfer-owner`),
-  `ASTERISK_EXTERNAL_MEDIA_ADDR` (socket UDP do gateway visto do Asterisk) e
-  `MEDIA_LISTEN_ADDR` (default `:4000`). O compose já passa tudo coerente.
+Product specs and ADRs are written in Portuguese (pt-BR); code, commits and APIs are in English.
 
-### Aplicar no Kubernetes (kustomize)
+## Quickstart
+
+Local stack with Docker Compose (infra + observability + all services):
 
 ```sh
-kubectl apply -k infra/k8s/overlays/dev    # ou prod
-# dashboards do Grafana vêm de fora da raiz do kustomization:
+make up                                # Telnyx media backend
+make up PROFILES="--profile asterisk"  # + self-hosted Asterisk media backend
+```
+
+- Web dashboard: `http://localhost:3000` · core-api: `:8080` · telephony-gw: `:8081`
+- Grafana: `http://localhost:3001` (`admin`/`admin`) — FrontDesk dashboards (voice health,
+  call funnel, business) and Prometheus/Loki/Tempo datasources pre-provisioned.
+
+Kubernetes (kustomize):
+
+```sh
+kubectl apply -k infra/k8s/overlays/dev    # or prod
+# Grafana dashboards live outside the kustomization root:
 kustomize build --load-restrictor LoadRestrictionsNone infra/k8s/overlays/dev | kubectl apply -f -
 ```
 
-Preencher `infra/k8s/base/secrets.yaml` antes (ver `SECRETS.md`); `MEDIA_BACKEND` e as
-envs do Asterisk vivem em `base/configmap.yaml` (senha ARI em `frontdesk-secrets`).
-O Deployment do Asterisk fica em `replicas: 0` (alavanca v2; RTP em k8s exige
-hostNetwork/nó dedicado — ver comentários em `base/asterisk/asterisk.yaml`).
+Fill in `infra/k8s/base/secrets.yaml` first (see `SECRETS.md`). `MEDIA_BACKEND` and the
+Asterisk envs live in `base/configmap.yaml`; the Asterisk Deployment ships at `replicas: 0`
+(RTP on k8s needs hostNetwork or a dedicated node — see comments in
+`base/asterisk/asterisk.yaml`).
 
-> **Nota de validação**: docker/kubectl/kustomize não existem na máquina onde esta fase
-> foi verificada — a validação de compose/k8s/observability foi **estática** (YAML/JSON
-> parseados, paths de volumes/build contexts/configMapGenerator conferidos, portas e
-> nomes de env cruzados com o código). O primeiro `docker compose up` / `kubectl apply`
-> real pode revelar ajustes finos de runtime.
+## Development
 
-## Desenvolvimento
+| Area | Commands |
+|---|---|
+| Go | `cd go && go build ./... && go vet ./... && go test ./...` |
+| Python | `cd python/agent-runtime && uv sync && uv run pytest && uv run ruff check . && uv run mypy src` |
+| Frontend | `pnpm install && pnpm -r typecheck` (Node ≥ 20.19; pnpm 11 via corepack — prefer Node 22/24) |
+| Web dev | `cd apps/web && pnpm dev` (set `VITE_API_URL` to the core-api `/v1`) · `pnpm build` · `pnpm preview` |
+| Mobile dev | `cd apps/mobile && pnpm start` (`pnpm ios` / `pnpm android`) · `pnpm typecheck` · `npx expo-doctor` |
 
-- Go: `cd go && go build ./... && go vet ./... && go test ./...`
-- Python: `cd python/agent-runtime && uv sync && uv run pytest && uv run ruff check . && uv run mypy src`
-- Frontend (raiz): `pnpm install && pnpm -r typecheck` (Node >= 20.19; pnpm 11 via
-  corepack — em Node 20 o shim do corepack pode falhar, use Node 22/24)
+The mobile app consumes `@frontdesk/shared` from source (no build step);
+`metro.config.js` extends the default `watchFolders` with the workspace root for hot reload.
 
-### Web (`apps/web`)
+Pinned versions live in [`VERSIONS.md`](VERSIONS.md). Phase-by-phase progress is tracked in
+[`CHECKPOINT.md`](CHECKPOINT.md).
 
-- Dev server: `cd apps/web && pnpm dev` (Vite; aponte `VITE_API_URL` para o core-api `/v1`)
-- Build de produção: `pnpm build` (roda `tsc --noEmit` + `vite build`, sai em `apps/web/dist/`)
-- Preview do build: `pnpm preview`
+## Design decisions
 
-### Mobile (`apps/mobile`)
+The `specs/adr/` directory records the load-bearing choices, including:
 
-- Dev: `cd apps/mobile && pnpm start` (Expo; `pnpm ios` / `pnpm android` para abrir no simulador)
-- Typecheck: `pnpm typecheck` · Saúde do projeto: `npx expo-doctor`
-- Monorepo: `metro.config.js` estende os `watchFolders` default com a raiz do workspace
-  para hot-reload de `@frontdesk/shared` (consumido por fonte, sem build step)
+- **ADR-002** — Go for the realtime/IO plane, Python for the agent plane
+- **ADR-003** — events as the source of truth (deterministic fold, no dual writes)
+- **ADR-005** — multi-tenancy via Postgres RLS, tenant only from request context
+- **ADR-006** — degrade, never drop: the ladder from full AI down to scripted + audio bank
+- **ADR-009** — self-hosted Asterisk media backend behind the same `media.Backend` interface
+- **ADR-010** — observability: OTel traces/metrics/logs, Grafana stack, per-call trace IDs
+
+## Status
+
+Pre-launch. Backend (16 Go packages, 44 Python tests, ruff/mypy strict), frontend (web +
+mobile) and infra are implemented and verified with `go test` / `pytest` / `tsc`; the
+compose/k8s/observability layer has been validated statically (parsed YAML, cross-checked
+ports, env names and volume paths) and may need runtime fine-tuning on first real
+`docker compose up` / `kubectl apply`.
