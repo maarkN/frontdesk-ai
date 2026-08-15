@@ -9,6 +9,9 @@ dependencies = [
     "langchain-anthropic>=0.3",
     "pydantic>=2.7",
     "websockets>=13",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
