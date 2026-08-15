@@ -1,0 +1,53 @@
+# Local ingress (ingress-nginx). *.localtest.me resolves to 127.0.0.1.
+# The Telnyx webhook cannot reach localhost: use a tunnel (ngrok/cloudflared)
+# pointed at telephony.frontdesk.localtest.me during development.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontdesk
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: frontdesk.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    - host: api.frontdesk.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: core-api
+                port:
+                  name: http
+    - host: telephony.frontdesk.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: telephony-gw
+                port:
+                  name: http
+    - host: grafana.frontdesk.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  name: http

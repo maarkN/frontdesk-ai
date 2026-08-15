@@ -1,0 +1,106 @@
+# Tempo — trace store (turn latency decomposition lives here: VAD -> STT ->
+# LLM first token -> TTS first chunk). Local storage; prod: S3 ca-central-1.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/part-of: frontdesk
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/blocks
+        wal:
+          path: /var/tempo/wal
+    compactor:
+      compaction:
+        block_retention: 168h
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tempo
+        app.kubernetes.io/part-of: frontdesk
+    spec:
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.6.0
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - name: http
+              containerPort: 3200
+            - name: otlp-grpc
+              containerPort: 4317
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+            - name: data
+              mountPath: /var/tempo
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+        - name: data
+          emptyDir: {} # prod: PVC / S3 object storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  selector:
+    app.kubernetes.io/name: tempo
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc

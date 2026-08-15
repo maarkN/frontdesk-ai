@@ -1,0 +1,54 @@
+# Prod ingress with TLS (cert-manager + Let's Encrypt).
+# Hosts are placeholders until the real domain is registered.
+# Cluster runs in AWS ca-central-1 (data residency).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontdesk
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Telnyx media streams ride a long-lived websocket on telephony-gw.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.frontdesk.example
+        - api.frontdesk.example
+        - telephony.frontdesk.example
+      secretName: frontdesk-tls
+  rules:
+    - host: app.frontdesk.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    - host: api.frontdesk.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: core-api
+                port:
+                  name: http
+    - host: telephony.frontdesk.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: telephony-gw
+                port:
+                  name: http

@@ -1,0 +1,7 @@
+# Namespace for all FrontDesk AI workloads.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk

@@ -1,0 +1,28 @@
+# Contexto de build enxuto: os Dockerfiles em infra/docker/ usam a raiz como
+# contexto — tudo que não entra em imagem fica fora do upload ao daemon.
+
+.git
+.gitignore
+
+# Node / TypeScript
+node_modules
+**/node_modules
+**/dist
+apps/mobile/.expo
+
+# Python
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Docs e specs não entram em imagem
+specs
+*.md
+!python/agent-runtime/README.md
+
+# Artefatos locais
+.env
+.env.*
+.DS_Store

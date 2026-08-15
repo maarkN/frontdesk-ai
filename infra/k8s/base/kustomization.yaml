@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - telephony-gw.yaml
+  - core-api.yaml
+  - notifier.yaml
+  - agent-runtime.yaml
+  - web.yaml
+  - statefulsets
+  - observability
+  - asterisk

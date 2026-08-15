@@ -1,0 +1,331 @@
+# FrontDesk AI — stack local completa (infra + observabilidade + serviços).
+#
+#   make up            # tudo, exceto asterisk
+#   make up PROFILES=--profile asterisk   # inclui o media backend próprio (ADR-009)
+#
+# Observabilidade é SEMPRE ligada (ADR-010): otel-collector, prometheus, loki,
+# tempo e grafana sobem no profile default. As configs em ./infra/observability/
+# pertencem ao agente de observabilidade — aqui apenas as referenciamos.
+#
+# Env vars dos serviços espelham exatamente o que os cmd/ leem
+# (go/cmd/telephony-gw, go/cmd/core-api, go/cmd/notifier) — nomes reais, não
+# convenções inventadas. Segredos vêm do ambiente/.env (defaults vazios = modo
+# log-only nos senders do notifier; sem chamadas externas em dev).
+
+name: frontdesk
+
+networks:
+  frontdesk:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  nats-data:
+  redis-data:
+  minio-data:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:
+
+services:
+  # ────────────────────────── infra ──────────────────────────
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: frontdesk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-frontdesk}
+      POSTGRES_DB: frontdesk
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Schema + RLS do MVP: os .sql de go/internal/store/migrations rodam em
+      # ordem lexicográfica no primeiro boot do volume (docker-entrypoint-initdb.d).
+      - ./go/internal/store/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U frontdesk -d frontdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [frontdesk]
+
+  nats:
+    image: nats:2-alpine
+    # -js liga JetStream (bus de eventos, ADR-003); -m expõe o monitor :8222.
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [frontdesk]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [frontdesk]
+
+  minio:
+    # S3 local (gravações/transcrições; produção = S3 ca-central-1).
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-frontdesk}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-frontdesk-dev}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [frontdesk]
+
+  # ─────────────────── observabilidade (sempre ligada, ADR-010) ───────────────────
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      # Config criada pelo agente de observabilidade.
+      - ./infra/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    networks: [frontdesk]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      # Config criada pelo agente de observabilidade.
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [frontdesk]
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      # Config criada pelo agente de observabilidade.
+      - ./infra/observability/loki-config.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks: [frontdesk]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      # Config criada pelo agente de observabilidade.
+      - ./infra/observability/tempo-config.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+    networks: [frontdesk]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      # Provisioning (datasources/dashboards) criado pelo agente de observabilidade.
+      # O provider de dashboards (provisioning/dashboards/dashboards.yaml)
+      # aponta para /var/lib/grafana/dashboards — os JSONs montam lá.
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+    networks: [frontdesk]
+
+  # ────────────── media backend próprio (opcional, ADR-009) ──────────────
+
+  asterisk:
+    # Dockerfile criado pelo agente do Asterisk em ./asterisk. Alavanca de
+    # margem v2 (ADR-004/ADR-009): fora do profile default de propósito.
+    build: ./asterisk
+    profiles: ["asterisk"]
+    environment:
+      # docker-entrypoint.sh materializa estes em ari_secret.conf; o
+      # telephony-gw lê os MESMOS nomes para autenticar no ARI.
+      ARI_USERNAME: ${ARI_USERNAME:-frontdesk}
+      ARI_PASSWORD: ${ARI_PASSWORD:-frontdesk-dev}
+    ports:
+      - "5060:5060/udp" # SIP
+      - "8088:8088" # ARI REST + WebSocket de eventos (http.conf)
+      - "10000-10200:10000-10200/udp" # RTP (casa com rtp.conf e o EXPOSE)
+    networks: [frontdesk]
+
+  # ────────────────────────── serviços ──────────────────────────
+
+  telephony-gw:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.go
+      args:
+        SERVICE: telephony-gw
+    environment:
+      HTTP_ADDR: ":8080"
+      NATS_URL: nats://nats:4222
+      EVENT_SUBJECT_PREFIX: frontdesk.events
+      TELNYX_API_KEY: ${TELNYX_API_KEY:-}
+      # DID→tenant estático do EPIC-002 ("+1514...=tenant-a,+1438...=tenant-b").
+      TENANT_DIDS: ${TENANT_DIDS:-}
+      OWNER_PHONE: ${OWNER_PHONE:-}
+      DRAIN_TIMEOUT: 30s
+      # Backend de mídia (ADR-009): telnyx (default) | asterisk. Com
+      # asterisk, suba o profile: make up PROFILES="--profile asterisk"
+      # e exporte MEDIA_BACKEND=asterisk.
+      MEDIA_BACKEND: ${MEDIA_BACKEND:-telnyx}
+      ASTERISK_ARI_URL: http://asterisk:8088/ari
+      ASTERISK_APP: frontdesk-v1
+      ARI_USERNAME: ${ARI_USERNAME:-frontdesk}
+      ARI_PASSWORD: ${ARI_PASSWORD:-frontdesk-dev}
+      ASTERISK_TRANSFER_CONTEXT: transfer-owner
+      # Socket UDP do External Media DESTE container, visto do Asterisk.
+      ASTERISK_EXTERNAL_MEDIA_ADDR: telephony-gw:4000
+      MEDIA_LISTEN_ADDR: ":4000"
+    expose:
+      - "4000/udp" # External Media RTP (backend asterisk)
+    ports:
+      - "8081:8080"
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      # Distroless: sem shell — o probe estático embutido na imagem faz o GET.
+      test: ["CMD", "/healthprobe", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks: [frontdesk]
+
+  core-api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.go
+      args:
+        SERVICE: core-api
+    environment:
+      CORE_API_ADDR: ":8080"
+      DATABASE_URL: postgres://frontdesk:${POSTGRES_PASSWORD:-frontdesk}@postgres:5432/frontdesk?sslmode=disable
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # core-api ainda não expõe /healthz; o probe aceita qualquer status <500,
+      # então GET /v1/tenants (405) comprova o servidor de pé.
+      test: ["CMD", "/healthprobe", "http://localhost:8080/v1/tenants"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks: [frontdesk]
+
+  notifier:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.go
+      args:
+        SERVICE: notifier
+    environment:
+      NOTIFIER_NATS_URL: nats://nats:4222
+      NOTIFIER_STREAM: FRONTDESK_EVENTS
+      NOTIFIER_CONSUMER: notifier
+      # Precisa casar com EVENT_SUBJECT_PREFIX do telephony-gw (default do
+      # notifier é "events"; o publisher usa "frontdesk.events").
+      NOTIFIER_SUBJECT_PREFIX: frontdesk.events
+      NOTIFIER_WEEKLY_CHECK_INTERVAL: 1h
+      NOTIFIER_TRANSCRIPT_BASE_URL: ${NOTIFIER_TRANSCRIPT_BASE_URL:-http://localhost:3000}
+      # Vazio ⇒ senders em modo log-only (sem chamadas externas em dev).
+      TELNYX_API_KEY: ${TELNYX_API_KEY:-}
+      TELNYX_FROM: ${TELNYX_FROM:-}
+      SES_FROM: ${SES_FROM:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    depends_on:
+      nats:
+        condition: service_healthy
+    # Sem healthcheck: o notifier é consumidor puro de JetStream, não expõe
+    # HTTP; o supervisor é o restart policy + o consumer durável no NATS.
+    restart: unless-stopped
+    networks: [frontdesk]
+
+  agent-runtime:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.agent-runtime
+    environment:
+      NATS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: agent-runtime
+      # Provider keys (BYOK futuro por tenant); vazio ⇒ providers passthrough/scripted.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+    expose:
+      - "8091" # websocket gateway<->agent (bridge.WebsocketGatewayServer)
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      # Até o servidor websocket ser ligado, saúde = import do pacote intacto.
+      test: ["CMD", "python", "-c", "import agent_runtime.bridge"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks: [frontdesk]
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    ports:
+      - "3000:80"
+    depends_on:
+      core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [frontdesk]

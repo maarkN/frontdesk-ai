@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - otel-collector.yaml
+  - prometheus.yaml
+  - loki.yaml
+  - tempo.yaml
+  - grafana.yaml
+
+# Grafana dashboards are sourced from the repo's observability assets
+# (infra/observability/grafana/dashboards/*.json). kustomize does not glob:
+# each file must be listed. Keep this list in sync with that directory.
+# NOTE: the files live outside this kustomization root, so build with
+#   kustomize build --load-restrictor LoadRestrictionsNone
+# (see infra/k8s/README.md).
+configMapGenerator:
+  - name: grafana-dashboards
+    namespace: frontdesk
+    files:
+      - ../../../observability/grafana/dashboards/business.json
+      - ../../../observability/grafana/dashboards/calls-funnel.json
+      - ../../../observability/grafana/dashboards/voice-health.json
+    options:
+      disableNameSuffixHash: true # grafana.yaml mounts it by fixed name
+      labels:
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/part-of: frontdesk

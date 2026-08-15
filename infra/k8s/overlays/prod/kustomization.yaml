@@ -1,0 +1,67 @@
+# Prod overlay — ca-central-1 (data residency: PIPEDA / Loi 25).
+# Postgres: use RDS; scale the in-cluster StatefulSet to 0 (patch below).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: frontdesk
+resources:
+  - ../../base
+  - ingress.yaml
+  - hpa.yaml
+  - pdb.yaml
+
+patches:
+  # telephony-gw: NO aggressive HPA — calls are stateful (a scale-in event
+  # kills live audio). Capacity changes go through slow, manual scaling and
+  # rely on the readiness-drain + terminationGracePeriodSeconds to bleed
+  # calls off a pod before it stops. Fixed replicas here.
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: telephony-gw
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: web
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: notifier
+  # Postgres runs on RDS in prod; in-cluster StatefulSet stays at 0.
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+    target:
+      kind: StatefulSet
+      name: postgres
+  # Spread every app across zones within ca-central-1.
+  # Example node pinning (uncomment on mixed-region clusters):
+  #   nodeSelector:
+  #     topology.kubernetes.io/region: ca-central-1
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: any
+      spec:
+        template:
+          spec:
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: topology.kubernetes.io/zone
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: frontdesk
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/part-of=frontdesk

@@ -1,0 +1,50 @@
+# HPAs for the STATELESS tiers only.
+# telephony-gw deliberately has NO HPA: calls are stateful and scale-in
+# terminates pods mid-call; see the note in kustomization.yaml.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: core-api
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: core-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-runtime
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-runtime
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Agent sessions are short (seconds/turn) but avoid thrash anyway.
+      stabilizationWindowSeconds: 300

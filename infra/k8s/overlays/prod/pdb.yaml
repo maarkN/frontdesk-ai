@@ -1,0 +1,67 @@
+# PodDisruptionBudgets — G5 (uptime >= 99.9%): voluntary disruptions
+# (node drains, upgrades) may never take the whole tier down.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: telephony-gw
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  # Strictest budget: evictions trigger call drains, do them one pod at a time.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: telephony-gw
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: core-api
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: core-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-runtime
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-runtime
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notifier
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: notifier

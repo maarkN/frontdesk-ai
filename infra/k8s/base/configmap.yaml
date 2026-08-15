@@ -1,0 +1,40 @@
+# Non-secret configuration shared by the FrontDesk services.
+# Keys mirror the env vars read by go/cmd/* and python/agent-runtime.
+# Secrets (API keys, DATABASE_URL, AWS creds) live in secrets.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontdesk-config
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/part-of: frontdesk
+data:
+  # NATS JetStream bus (in-cluster StatefulSet; see base/statefulsets/nats.yaml).
+  NATS_URL: "nats://nats.frontdesk.svc.cluster.local:4222"
+  EVENT_SUBJECT_PREFIX: "frontdesk.events"
+  # Listen addresses (defaults match the binaries; kept explicit for clarity).
+  HTTP_ADDR: ":8080"          # telephony-gw
+  CORE_API_ADDR: ":8080"      # core-api
+  # Drain budget for telephony-gw: active calls are allowed to finish before
+  # shutdown. Must stay BELOW terminationGracePeriodSeconds on the Deployment.
+  DRAIN_TIMEOUT: "25m"
+  # Media backend of telephony-gw (ADR-009): "telnyx" (MVP default) or
+  # "asterisk". The ASTERISK_* / ARI_USERNAME values below are only read
+  # when MEDIA_BACKEND=asterisk (ARI_PASSWORD lives in frontdesk-secrets).
+  MEDIA_BACKEND: "telnyx"
+  ASTERISK_ARI_URL: "http://asterisk.frontdesk.svc.cluster.local:8088/ari"
+  ASTERISK_APP: "frontdesk-v1"
+  ARI_USERNAME: "frontdesk"
+  ASTERISK_TRANSFER_CONTEXT: "transfer-owner"
+  # External Media UDP socket of telephony-gw as reachable FROM Asterisk.
+  # With Asterisk outside the cluster (the recommended prod layout — see
+  # base/asterisk/asterisk.yaml), point this at a routable gateway address.
+  ASTERISK_EXTERNAL_MEDIA_ADDR: "telephony-gw.frontdesk.svc.cluster.local:4000"
+  MEDIA_LISTEN_ADDR: ":4000"
+  # OpenTelemetry — all services export OTLP to the collector.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.frontdesk.svc.cluster.local:4317"
+  OTEL_SERVICE_NAMESPACE: "frontdesk"
+  # Data residency: everything stays in ca-central-1 (PIPEDA / Loi 25).
+  AWS_REGION: "ca-central-1"
+  SES_FROM: "no-reply@frontdesk.example"          # placeholder
+  NOTIFIER_TRANSCRIPT_BASE_URL: "https://app.frontdesk.example/calls"  # placeholder

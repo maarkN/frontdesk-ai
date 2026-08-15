@@ -1,0 +1,125 @@
+# Asterisk — v2 margin lever, NOT part of the MVP (Telnyx media streams carry
+# calls today; see specs/CONTEXT.md). Kept at replicas: 0 as a placeholder.
+#
+# WHY ASTERISK IS AWKWARD INSIDE KUBERNETES
+# - RTP media uses a large dynamic UDP port range (default 10000-20000). A
+#   ClusterIP/LoadBalancer Service cannot reasonably expose thousands of UDP
+#   ports, and NAT rewriting breaks SDP addresses unless Asterisk knows its
+#   external IP (externip/stunaddr).
+# - Media is latency-sensitive; extra conntrack/NAT hops add jitter.
+# - Because of this, prod deployments usually run Asterisk OUTSIDE the
+#   cluster (dedicated VMs/bare metal with public IPs in ca-central-1), or
+#   inside with `hostNetwork: true` on dedicated tainted nodes, or with a
+#   dedicated network (Multus/SR-IOV) handing the pod a routable interface.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asterisk
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/name: asterisk
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  replicas: 0 # v2: keep at 0 until self-hosted trunking lands
+  strategy:
+    type: Recreate # RTP port ownership: never two instances on one node
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: asterisk
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: asterisk
+        app.kubernetes.io/part-of: frontdesk
+    spec:
+      serviceAccountName: asterisk
+      # hostNetwork gives Asterisk the node's real IP so SIP/SDP and the RTP
+      # UDP range (10000-20000) work without per-port Services. Enable ONLY
+      # on dedicated, tainted media nodes:
+      # hostNetwork: true
+      # dnsPolicy: ClusterFirstWithHostNet
+      # nodeSelector:
+      #   workload: media
+      # tolerations:
+      #   - key: workload
+      #     value: media
+      #     effect: NoSchedule
+      terminationGracePeriodSeconds: 1800 # drain active calls, same as telephony-gw
+      containers:
+        - name: asterisk
+          # Image built from the repo's ./asterisk Dockerfile (Asterisk 22,
+          # ARI + External Media). Its entrypoint materializes the ARI user
+          # from ARI_USERNAME/ARI_PASSWORD — the same env names telephony-gw
+          # reads to authenticate (MEDIA_BACKEND=asterisk, ADR-009).
+          image: ghcr.io/maarkn/frontdesk/asterisk:0.1.0 # placeholder tag
+          env:
+            - name: ARI_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: frontdesk-config
+                  key: ARI_USERNAME
+            - name: ARI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: frontdesk-secrets
+                  key: ARI_PASSWORD
+          ports:
+            - name: sip-udp
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+            - name: ari
+              containerPort: 8088 # ARI REST + event websocket (http.conf)
+              protocol: TCP
+            # RTP range 10000-10200/UDP (rtp.conf) is NOT listed here:
+            # containerPort entries are informational and a long port list is
+            # unmanageable. With hostNetwork the range is reachable directly;
+            # without it, you would need a per-port Service or a dedicated
+            # network.
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          livenessProbe:
+            tcpSocket:
+              port: sip-tcp
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: sip-tcp
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+# ClusterIP for SIP signalling and ARI — this is what frontdesk-config's
+# ASTERISK_ARI_URL (http://asterisk.frontdesk.svc.cluster.local:8088/ari)
+# resolves to. RTP is deliberately NOT here (see the Deployment header).
+apiVersion: v1
+kind: Service
+metadata:
+  name: asterisk
+  namespace: frontdesk
+  labels:
+    app.kubernetes.io/name: asterisk
+    app.kubernetes.io/part-of: frontdesk
+spec:
+  selector:
+    app.kubernetes.io/name: asterisk
+  ports:
+    - name: sip-udp
+      port: 5060
+      targetPort: sip-udp
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      targetPort: sip-tcp
+      protocol: TCP
+    - name: ari
+      port: 8088
+      targetPort: ari
+      protocol: TCP

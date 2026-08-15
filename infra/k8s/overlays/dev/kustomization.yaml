@@ -1,0 +1,53 @@
+# Dev overlay: single replica everywhere, low resources, local ingress
+# (nginx + *.localtest.me resolves to 127.0.0.1 without /etc/hosts edits).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: frontdesk
+resources:
+  - ../../base
+  - ingress.yaml
+
+patches:
+  # Single replica for every app Deployment in dev.
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/part-of=frontdesk
+  # Asterisk stays off even in dev (v2 lever).
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+    target:
+      kind: Deployment
+      name: asterisk
+  # Shorter drain in dev: nobody has real calls to protect.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: telephony-gw
+      spec:
+        template:
+          spec:
+            terminationGracePeriodSeconds: 60
+    target:
+      kind: Deployment
+      name: telephony-gw
+  # Low resources across the board.
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/part-of=frontdesk
