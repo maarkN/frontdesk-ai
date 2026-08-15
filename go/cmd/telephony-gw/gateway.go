@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/maarkn/frontdesk/internal/event"
+	"github.com/maarkn/frontdesk/internal/obs"
 	"github.com/maarkn/frontdesk/internal/telnyx"
 	"github.com/maarkn/frontdesk/internal/tenantctx"
 )
@@ -20,6 +21,10 @@ type gateway struct {
 	events   event.Publisher
 	control  telnyx.CallControl
 	sessions *sessionRegistry
+	// metrics carries the product instruments (EPIC-010). The turn.Machine
+	// wiring wraps its per-call hooks with metrics.TurnHooks when the media
+	// WS attaches. May be nil in tests.
+	metrics *obs.Metrics
 }
 
 // telnyxWebhook is the (subset of the) Telnyx event envelope we consume.

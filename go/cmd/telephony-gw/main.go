@@ -13,18 +13,24 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/maarkn/frontdesk/internal/asterisk"
 	"github.com/maarkn/frontdesk/internal/event"
+	"github.com/maarkn/frontdesk/internal/obs"
 	"github.com/maarkn/frontdesk/internal/telnyx"
 )
 
+// serviceName identifies this binary in logs and telemetry resources.
+const serviceName = "telephony-gw"
+
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	logger := obs.NewLogger(obs.WithLogService(serviceName, os.Getenv("SERVICE_VERSION")))
 	slog.SetDefault(logger)
 
 	cfg, err := loadConfig(os.Getenv)
@@ -61,6 +67,21 @@ type config struct {
 	OwnerPhone string
 	// DrainTimeout bounds how long shutdown waits for active calls.
 	DrainTimeout time.Duration
+
+	// MediaBackend selects the carrier/media implementation (ADR-009):
+	// "telnyx" (MVP default) or "asterisk" (own media backend, v2 margin
+	// lever). Env: MEDIA_BACKEND.
+	MediaBackend string
+	// Asterisk configures the ARI backend (used when MediaBackend is
+	// "asterisk"). Envs: ASTERISK_ARI_URL, ASTERISK_ARI_WS_URL (optional,
+	// derived from URL when empty), ASTERISK_APP, ARI_USERNAME,
+	// ARI_PASSWORD (same names the asterisk/ container entrypoint reads),
+	// ASTERISK_TRANSFER_CONTEXT, ASTERISK_EXTERNAL_MEDIA_ADDR (this
+	// gateway's External Media UDP socket as reachable FROM Asterisk).
+	Asterisk asterisk.Config
+	// MediaListenAddr is the local UDP bind of the External Media server
+	// (asterisk backend only). Env: MEDIA_LISTEN_ADDR.
+	MediaListenAddr string
 }
 
 // loadConfig reads the environment through getenv (injectable for tests).
@@ -90,8 +111,41 @@ func loadConfig(getenv func(string) string) (config, error) {
 			cfg.TenantByDID[did] = tenant
 		}
 	}
+
+	cfg.MediaBackend = envOr(getenv, "MEDIA_BACKEND", backendTelnyx)
+	switch cfg.MediaBackend {
+	case backendTelnyx:
+	case backendAsterisk:
+		cfg.Asterisk = asterisk.Config{
+			URL:          getenv("ASTERISK_ARI_URL"),
+			WebsocketURL: getenv("ASTERISK_ARI_WS_URL"),
+			// Default matches extensions.conf's ACTIVE_APP global; each
+			// blue/green deploy color overrides with its own app name.
+			Application: envOr(getenv, "ASTERISK_APP", "frontdesk-v1"),
+			// ARI_USERNAME/ARI_PASSWORD deliberately mirror the env names
+			// the asterisk/docker-entrypoint.sh materializes into
+			// ari_secret.conf — one pair of values on both sides.
+			Username:          envOr(getenv, "ARI_USERNAME", "frontdesk"),
+			Password:          getenv("ARI_PASSWORD"),
+			TransferContext:   envOr(getenv, "ASTERISK_TRANSFER_CONTEXT", "transfer-owner"),
+			ExternalMediaAddr: getenv("ASTERISK_EXTERNAL_MEDIA_ADDR"),
+		}
+		cfg.MediaListenAddr = envOr(getenv, "MEDIA_LISTEN_ADDR", ":4000")
+		if cfg.Asterisk.URL == "" {
+			return config{}, fmt.Errorf("MEDIA_BACKEND=asterisk requires ASTERISK_ARI_URL")
+		}
+	default:
+		return config{}, fmt.Errorf("unknown MEDIA_BACKEND %q (want %q or %q)",
+			cfg.MediaBackend, backendTelnyx, backendAsterisk)
+	}
 	return cfg, nil
 }
+
+// Media backend names accepted in MEDIA_BACKEND (ADR-009).
+const (
+	backendTelnyx   = "telnyx"
+	backendAsterisk = "asterisk"
+)
 
 func envOr(getenv func(string) string, key, def string) string {
 	if v := getenv(key); v != "" {
@@ -102,23 +156,84 @@ func envOr(getenv func(string) string, key, def string) string {
 
 // run wires the gateway and blocks until ctx is done, then drains.
 func run(ctx context.Context, cfg config, logger *slog.Logger) error {
+	// Telemetry (EPIC-010): OTLP gRPC traces+metrics when
+	// OTEL_EXPORTER_OTLP_ENDPOINT is set; disabled (no-op) otherwise.
+	tel, err := obs.Setup(ctx, obs.WithServiceName(serviceName), obs.WithInsecure())
+	if err != nil {
+		return fmt.Errorf("telemetry setup: %w", err)
+	}
+	defer func() {
+		if err := tel.Shutdown(context.Background()); err != nil {
+			logger.Warn("telemetry shutdown", "err", err)
+		}
+	}()
+	metrics, err := obs.NewMetrics(tel.Meter(serviceName))
+	if err != nil {
+		return fmt.Errorf("telemetry metrics: %w", err)
+	}
+
 	publisher, closeBus, err := newPublisher(cfg)
 	if err != nil {
 		return err
 	}
 	defer closeBus()
 
-	callControl := telnyx.NewClient(cfg.TelnyxAPIKey)
+	// Media backend selection (ADR-009): both implement the carrier-neutral
+	// telnyx.CallControl surface, so the gateway below is identical.
+	var callControl telnyx.CallControl
+	mediaErrc := make(chan error, 1)
+	switch cfg.MediaBackend {
+	case backendAsterisk:
+		backend, err := asterisk.New(ctx, cfg.Asterisk, cfg.MediaListenAddr)
+		if err != nil {
+			return fmt.Errorf("asterisk backend: %w", err)
+		}
+		defer func() {
+			if cerr := backend.Close(); cerr != nil {
+				logger.Warn("asterisk backend close", "err", cerr)
+			}
+		}()
+		// The External Media RTP server is the audio path of every call:
+		// if its loop dies while the gateway is up, that is fatal.
+		go func() {
+			if serr := backend.Media.Serve(ctx); serr != nil && ctx.Err() == nil {
+				mediaErrc <- serr
+			}
+		}()
+		callControl = backend.Control
+		logger.Info("media backend: asterisk",
+			"ari", cfg.Asterisk.URL,
+			"app", cfg.Asterisk.Application,
+			"externalMediaAddr", cfg.Asterisk.ExternalMediaAddr,
+			"mediaListenAddr", cfg.MediaListenAddr)
+	default:
+		callControl = telnyx.NewClient(cfg.TelnyxAPIKey)
+		logger.Info("media backend: telnyx")
+	}
+
 	gw := &gateway{
 		cfg:      cfg,
 		logger:   logger,
 		events:   publisher,
 		control:  callControl,
 		sessions: newSessionRegistry(),
+		metrics:  metrics,
 	}
+
+	// ready flips to false when shutdown starts, so the k8s readiness probe
+	// (/readyz) removes the pod from the Service while active calls drain.
+	var ready atomic.Bool
+	ready.Store(true)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !ready.Load() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("POST /telnyx/webhook", gw.handleWebhook)
@@ -141,11 +256,14 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	select {
 	case err := <-errc:
 		return err
+	case err := <-mediaErrc:
+		return fmt.Errorf("external media server: %w", err)
 	case <-ctx.Done():
 	}
 
 	// Graceful shutdown: stop accepting webhooks, then DRAIN active calls —
 	// a deploy must never hang up on a caller mid-sentence.
+	ready.Store(false)
 	logger.Info("shutting down: draining active calls", "timeout", cfg.DrainTimeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.DrainTimeout)
 	defer cancel()

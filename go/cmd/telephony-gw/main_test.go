@@ -31,6 +31,47 @@ func TestLoadConfig(t *testing.T) {
 	require.Equal(t, "+15145559999", cfg.OwnerPhone)
 }
 
+// TestLoadConfigMediaBackend: MEDIA_BACKEND selects the carrier (ADR-009) —
+// default telnyx, asterisk requires ASTERISK_ARI_URL, anything else fails.
+func TestLoadConfigMediaBackend(t *testing.T) {
+	cfg, err := loadConfig(func(string) string { return "" })
+	require.NoError(t, err)
+	require.Equal(t, "telnyx", cfg.MediaBackend, "telnyx is the MVP default")
+
+	env := map[string]string{
+		"MEDIA_BACKEND":                "asterisk",
+		"ASTERISK_ARI_URL":             "http://asterisk:8088/ari",
+		"ARI_PASSWORD":                 "s3cret",
+		"ASTERISK_EXTERNAL_MEDIA_ADDR": "telephony-gw:4000",
+	}
+	cfg, err = loadConfig(func(k string) string { return env[k] })
+	require.NoError(t, err)
+	require.Equal(t, "asterisk", cfg.MediaBackend)
+	require.Equal(t, "http://asterisk:8088/ari", cfg.Asterisk.URL)
+	require.Equal(t, "frontdesk-v1", cfg.Asterisk.Application, "ACTIVE_APP default")
+	require.Equal(t, "frontdesk", cfg.Asterisk.Username, "entrypoint default user")
+	require.Equal(t, "s3cret", cfg.Asterisk.Password)
+	require.Equal(t, "transfer-owner", cfg.Asterisk.TransferContext)
+	require.Equal(t, "telephony-gw:4000", cfg.Asterisk.ExternalMediaAddr)
+	require.Equal(t, ":4000", cfg.MediaListenAddr)
+
+	_, err = loadConfig(func(k string) string {
+		if k == "MEDIA_BACKEND" {
+			return "asterisk"
+		}
+		return ""
+	})
+	require.Error(t, err, "asterisk backend without ASTERISK_ARI_URL")
+
+	_, err = loadConfig(func(k string) string {
+		if k == "MEDIA_BACKEND" {
+			return "carrier-pigeon"
+		}
+		return ""
+	})
+	require.Error(t, err, "unknown backend rejected at boot")
+}
+
 func TestLoadConfigRejectsMalformedDIDs(t *testing.T) {
 	_, err := loadConfig(func(k string) string {
 		if k == "TENANT_DIDS" {
