@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_runtime import telemetry
 from agent_runtime.events import EventEmitter
 from agent_runtime.graph import AgentRuntime
 from agent_runtime.models import EventEnvelope, TenantConfig
@@ -111,7 +112,27 @@ class CallSession:
 
     async def on_turn(self, text: str) -> AgentReply:
         """Run one graph turn, publish its events, reply to the gateway."""
-        reply_text = await self._runtime.handle_turn(text)
+        # One span per turn (EPIC-010): locale, cascade tier and tool are
+        # stamped after the graph ran; a no-op span when telemetry is off.
+        with telemetry.turn_span(call_id=self._call_id) as span:
+            reply_text = await self._runtime.handle_turn(text)
+            state = self._runtime.state
+            tier = (
+                self._runtime.tier_decisions[-1][1].value if self._runtime.tier_decisions else None
+            )
+            tools = [
+                str(e.payload.get("tool", ""))
+                for e in self._emitter.emitted[self._flushed :]
+                if e.type == "tool.invoked"
+            ]
+            telemetry.annotate_turn(
+                span,
+                turn=state.turn,
+                locale=state.locale.value,
+                tier=tier,
+                tools=[t for t in tools if t],
+                ended=state.ended,
+            )
         await self._flush_events()
         reply = AgentReply(call_id=self._call_id, text=reply_text, ended=self._runtime.state.ended)
         await self._sink.send(reply)

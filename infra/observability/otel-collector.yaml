@@ -1,0 +1,63 @@
+# OTel Collector do FrontDesk AI (EPIC-010).
+#
+# Recebe OTLP dos serviços Go (telephony-gw, core-api, notifier) e do
+# agent-runtime Python, e distribui:
+#   métricas -> Prometheus (scrape em :8889)
+#   logs     -> Loki
+#   traces   -> Tempo (OTLP gRPC)
+#
+# memory_limiter vem antes do batch em todos os pipelines (recomendação
+# upstream: proteger o processo antes de acumular lotes).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Mantém service.name como label "job" nas séries exportadas.
+    resource_to_telemetry_conversion:
+      enabled: true
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    default_labels_enabled:
+      exporter: true
+      job: true
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]

@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -26,11 +26,17 @@ import (
 	"github.com/maarkn/frontdesk/internal/notify"
 	"github.com/maarkn/frontdesk/internal/notify/ses"
 	"github.com/maarkn/frontdesk/internal/notify/telnyx"
+	"github.com/maarkn/frontdesk/internal/obs"
 )
 
+// serviceName identifies this binary in logs and telemetry resources.
+const serviceName = "notifier"
+
 func main() {
+	slog.SetDefault(obs.NewLogger(obs.WithLogService(serviceName, os.Getenv("SERVICE_VERSION"))))
 	if err := run(); err != nil {
-		log.Fatalf("notifier: %v", err)
+		slog.Error("notifier exited", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -99,12 +105,33 @@ func run() error {
 		return err
 	}
 
+	// Telemetry (EPIC-010): the OTel metrics adapter implements
+	// notify.Metrics; without a collector endpoint the log-only slaMetrics
+	// keeps the SLA visible.
+	tel, err := obs.Setup(ctx, obs.WithServiceName(serviceName), obs.WithInsecure())
+	if err != nil {
+		return fmt.Errorf("telemetry setup: %w", err)
+	}
+	defer func() {
+		if err := tel.Shutdown(context.Background()); err != nil {
+			slog.Warn("telemetry shutdown", "err", err)
+		}
+	}()
+	var metrics notify.Metrics = slaMetrics{}
+	if tel.Enabled() {
+		m, err := obs.NewMetrics(tel.Meter(serviceName))
+		if err != nil {
+			return fmt.Errorf("telemetry metrics: %w", err)
+		}
+		metrics = m
+	}
+
 	n, err := notify.New(notify.Deps{
 		SMS:     newSMSSender(cfg),
 		Email:   newEmailSender(cfg),
 		Dedup:   &notify.MemoryDedup{},
 		Tenants: tenants,
-		Metrics: slaMetrics{},
+		Metrics: metrics,
 	}, notify.WithTranscriptBaseURL(cfg.transcriptBaseURL))
 	if err != nil {
 		return err
@@ -150,19 +177,19 @@ func run() error {
 				return
 			case <-ticker.C:
 				if err := n.SendWeeklyReports(ctx); err != nil {
-					log.Printf("weekly reports: %v", err)
+					slog.Error("weekly reports", "err", err)
 				}
 			}
 		}
 	}()
 
-	log.Printf("notifier consuming %s.> on %s", cfg.subjectPrefix, cfg.natsURL)
+	slog.Info("notifier consuming events", "subjectPrefix", cfg.subjectPrefix, "natsURL", cfg.natsURL)
 	err = event.NewJetStreamSubscriber(consumer).Subscribe(ctx, n.HandleEvent)
 	wg.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("subscribe: %w", err)
 	}
-	log.Print("notifier stopped")
+	slog.Info("notifier stopped")
 	return nil
 }
 
@@ -194,7 +221,7 @@ func newSMSSender(cfg config) notify.SMSSender {
 	if cfg.telnyxAPIKey != "" && cfg.telnyxFrom != "" {
 		return telnyx.New(cfg.telnyxAPIKey, cfg.telnyxFrom)
 	}
-	log.Print("TELNYX_API_KEY/TELNYX_FROM unset; SMS in log-only mode")
+	slog.Warn("TELNYX_API_KEY/TELNYX_FROM unset; SMS in log-only mode")
 	return logSMS{}
 }
 
@@ -204,7 +231,7 @@ func newEmailSender(cfg config) notify.EmailSender {
 	if cfg.sesFrom != "" && cfg.awsAccessKey != "" {
 		return ses.New(cfg.sesFrom, cfg.awsAccessKey, cfg.awsSecretKey)
 	}
-	log.Print("SES_FROM/AWS credentials unset; e-mail in log-only mode")
+	slog.Warn("SES_FROM/AWS credentials unset; e-mail in log-only mode")
 	return logEmail{}
 }
 
@@ -215,8 +242,8 @@ type logSMS struct{}
 var _ notify.SMSSender = logSMS{}
 
 // Send implements notify.SMSSender.
-func (logSMS) Send(_ context.Context, msg notify.SMS) error {
-	log.Printf("SMS to %s: %s", msg.To, msg.Body)
+func (logSMS) Send(ctx context.Context, msg notify.SMS) error {
+	slog.InfoContext(ctx, "SMS (log-only)", "to", msg.To, "body", msg.Body)
 	return nil
 }
 
@@ -226,8 +253,8 @@ type logEmail struct{}
 var _ notify.EmailSender = logEmail{}
 
 // Send implements notify.EmailSender.
-func (logEmail) Send(_ context.Context, msg notify.Email) error {
-	log.Printf("EMAIL to %s [%s]:\n%s", msg.To, msg.Subject, msg.Body)
+func (logEmail) Send(ctx context.Context, msg notify.Email) error {
+	slog.InfoContext(ctx, "EMAIL (log-only)", "to", msg.To, "subject", msg.Subject, "body", msg.Body)
 	return nil
 }
 
@@ -239,8 +266,8 @@ var _ notify.Metrics = slaMetrics{}
 
 // ObserveOwnerSMSLatency implements notify.Metrics.
 func (slaMetrics) ObserveOwnerSMSLatency(d time.Duration) {
-	log.Printf("metric sms_owner_latency_seconds=%.3f", d.Seconds())
+	slog.Info("metric", "sms_owner_latency_seconds", d.Seconds())
 	if d > 60*time.Second {
-		log.Printf("SLA breach: owner SMS took %.1fs (>60s)", d.Seconds())
+		slog.Warn("SLA breach: owner SMS over 60s", "seconds", d.Seconds())
 	}
 }

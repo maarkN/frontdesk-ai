@@ -28,13 +28,18 @@ import (
 	"github.com/maarkn/frontdesk/internal/api"
 	"github.com/maarkn/frontdesk/internal/billing"
 	"github.com/maarkn/frontdesk/internal/domain"
+	"github.com/maarkn/frontdesk/internal/obs"
 	"github.com/maarkn/frontdesk/internal/store"
 )
 
 // shutdownGrace is how long in-flight requests may drain on shutdown.
 const shutdownGrace = 10 * time.Second
 
+// serviceName identifies this binary in logs and telemetry resources.
+const serviceName = "core-api"
+
 func main() {
+	slog.SetDefault(obs.NewLogger(obs.WithLogService(serviceName, os.Getenv("SERVICE_VERSION"))))
 	if err := run(); err != nil {
 		slog.Error("core-api exited", "error", err)
 		os.Exit(1)
@@ -44,6 +49,17 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Telemetry (EPIC-010): enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+	tel, err := obs.Setup(ctx, obs.WithServiceName(serviceName), obs.WithInsecure())
+	if err != nil {
+		return fmt.Errorf("telemetry setup: %w", err)
+	}
+	defer func() {
+		if err := tel.Shutdown(context.Background()); err != nil {
+			slog.Warn("telemetry shutdown", "err", err)
+		}
+	}()
 
 	addr := os.Getenv("CORE_API_ADDR")
 	if addr == "" {
