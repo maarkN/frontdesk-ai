@@ -44,6 +44,28 @@
 - [x] **Fase 4 — Verificação final** (2026-08-13)
   - go build/vet/test verdes · pytest 44 ok · `pnpm -r typecheck` ok · vite build ok ·
     expo-doctor 18/18 · consistência shared↔Go e specs↔código revisada.
+- [x] **Fase 5 — Infra, observabilidade, Asterisk, ElevenLabs** (2026-08-13)
+  - Infra: `docker-compose.yml` (postgres+RLS migrations, NATS JetStream, redis, minio,
+    serviços Go/Python/web) · `infra/docker/` (Dockerfiles distroless + healthprobe) ·
+    `infra/k8s/` kustomize base+overlays (drain 25m no telephony-gw, PDB/HPA em prod)
+  - Observabilidade (ADR-010): otel-collector→Prometheus/Loki/Tempo, Grafana provisionado
+    (datasources com uid fixo + dashboards voice-health/calls-funnel/business)
+  - Asterisk (ADR-009): `asterisk/` (Asterisk 22, ARI, External Media slin16, blue/green
+    via `ACTIVE_APP`, `transfer-owner`) · `go/internal/asterisk` (Backend = CallControl ARI +
+    ExternalMediaServer RTP + Drainer + rehydrate; prova que telnyx.CallControl não vaza)
+  - **Integração no `cmd/telephony-gw`**: `MEDIA_BACKEND=telnyx|asterisk` (default telnyx),
+    envs `ASTERISK_ARI_URL`/`ASTERISK_APP`/`ARI_USERNAME`/`ARI_PASSWORD`/
+    `ASTERISK_TRANSFER_CONTEXT`/`ASTERISK_EXTERNAL_MEDIA_ADDR`/`MEDIA_LISTEN_ADDR`,
+    `/readyz` para drain no k8s; compose e configmap/secrets k8s passam as mesmas envs
+  - ElevenLabs: provider TTS fallback no agent-runtime (`providers/elevenlabs.py`,
+    `ELEVENLABS_API_KEY` no compose e em `frontdesk-secrets`)
+  - Correções de drift: paths de volumes de observabilidade no compose
+    (prometheus.yml/loki-config/tempo-config, mounts do Grafana), dashboards reais no
+    configMapGenerator k8s, portas ARI 8088 + RTP 10000–10200 coerentes, Service asterisk
+  - Verificação: go mod tidy/build/vet/test verdes (18 pacotes) · pytest 57 ok · ruff ok ·
+    mypy strict ok (16 arquivos) · YAML compose/k8s/observability + JSON dashboards
+    parseados ok · cross-refs de paths/portas ok · **validação docker/k8s estática**
+    (sem docker/kubectl na máquina — ver README §Infra)
 
 ## Como retomar
 
