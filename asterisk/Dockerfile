@@ -1,13 +1,15 @@
 # Asterisk 22 LTS — backend de mídia alternativo do telephony-gw (ADR-009).
 #
-# Escolha da imagem (documentada): Debian 13 "trixie" empacota Asterisk 22 LTS
-# (chan_pjsip nativo, chan_sip já removido upstream). Instalar o pacote da
-# distro em vez de compilar da fonte corta o build de ~30min para ~1min,
-# recebe patches de segurança via apt e é suficiente para o ambiente de
-# laboratório/staging do ADR-009 (o backend Asterisk NÃO está no caminho de
-# produção do MVP). Se um módulo fora do pacote for necessário no futuro
-# (ex.: res_audiosocket custom), trocar para build da fonte em multi-stage.
-FROM debian:trixie-slim
+# Escolha da imagem (documentada): o pacote asterisk foi REMOVIDO do Debian 13
+# "trixie" (estável) e só voltou ao archive no 14 "forky"/sid, já como 22 LTS
+# (chan_pjsip nativo, chan_sip removido upstream) — por isso a base é
+# forky-slim (testing). Instalar o pacote da distro em vez de compilar da
+# fonte corta o build de ~30min para ~1min, recebe patches via apt e é
+# suficiente para o ambiente de laboratório/staging do ADR-009 (o backend
+# Asterisk NÃO está no caminho de produção do MVP). Se um módulo fora do
+# pacote for necessário no futuro (ex.: res_audiosocket custom), trocar para
+# build da fonte em multi-stage.
+FROM debian:forky-slim
 
 # Pin da série 22 (LTS). O sufixo exato de patch fica a cargo do apt para
 # receber correções; a série é garantida pela distro.
