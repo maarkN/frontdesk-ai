@@ -19,10 +19,17 @@ RUN apt-get update \
         ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    && asterisk -V | grep -q "Asterisk 22"
+    && asterisk -V | grep -q "Asterisk 22" \
+    # Realtime no Postgres depende do driver pgsql; o pacote da distro compila
+    # com libpq (verificado no debian/control) — este assert quebra o build
+    # cedo se um dia o empacotamento mudar.
+    && ls /usr/lib/*/asterisk/modules/res_config_pgsql.so
 
-# Configuração do gateway: substitui a config default da distro.
-COPY --chown=asterisk:asterisk pjsip.conf extensions.conf ari.conf http.conf rtp.conf /etc/asterisk/
+# Configuração do gateway: substitui a config default da distro. Troncos e
+# ramais SIP NÃO estão aqui — vivem no Postgres (tabelas ps_*, ver
+# extconfig.conf/sorcery.conf e a migration 0002_asterisk_realtime.sql).
+COPY --chown=asterisk:asterisk pjsip.conf extensions.conf ari.conf http.conf rtp.conf \
+    extconfig.conf sorcery.conf modules.conf /etc/asterisk/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
     && install -d -o asterisk -g asterisk /var/run/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk
@@ -32,7 +39,8 @@ EXPOSE 5060/udp 5060/tcp 8088/tcp 10000-10200/udp
 
 USER asterisk
 
-# O entrypoint materializa segredos (ARI) a partir de env vars antes do boot —
-# arquivos de config do Asterisk não expandem variáveis de ambiente.
+# O entrypoint materializa segredos (ARI + conexão pgsql do realtime) a partir
+# de env vars antes do boot — configs do Asterisk não expandem variáveis de
+# ambiente.
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["asterisk", "-f", "-p"]

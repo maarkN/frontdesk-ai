@@ -184,6 +184,16 @@ services:
       # telephony-gw lê os MESMOS nomes para autenticar no ARI.
       ARI_USERNAME: ${ARI_USERNAME:-frontdesk}
       ARI_PASSWORD: ${ARI_PASSWORD:-frontdesk-dev}
+      # Realtime (ARA): troncos/ramais SIP vêm das tabelas ps_* do Postgres
+      # (migration 0002). O entrypoint materializa em res_pgsql.conf.
+      PGSQL_HOST: postgres
+      PGSQL_PORT: "5432"
+      PGSQL_DBNAME: frontdesk
+      PGSQL_USER: frontdesk
+      PGSQL_PASSWORD: ${POSTGRES_PASSWORD:-frontdesk}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "5060:5060/udp" # SIP
       - "8088:8088" # ARI REST + WebSocket de eventos (http.conf)

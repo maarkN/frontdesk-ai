@@ -63,6 +63,27 @@ spec:
                 secretKeyRef:
                   name: frontdesk-secrets
                   key: ARI_PASSWORD
+            # PJSIP Realtime (ARA): trunks/extensions live in the ps_* tables
+            # (migration 0002_asterisk_realtime.sql); the entrypoint renders
+            # res_pgsql.conf from these. Host/db/user default to the compose
+            # values inside the entrypoint — only the password is required.
+            - name: PGSQL_HOST
+              value: postgres.frontdesk.svc.cluster.local
+            - name: PGSQL_DBNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_DB
+            - name: PGSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_USER
+            - name: PGSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_PASSWORD
           ports:
             - name: sip-udp
               containerPort: 5060

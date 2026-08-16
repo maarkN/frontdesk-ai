@@ -9,13 +9,68 @@ de margem da v2. O lado Go vive em `go/internal/asterisk`.
 
 | Arquivo | Papel |
 |---|---|
-| `Dockerfile` | Asterisk 22 LTS via pacote do Debian 13 "trixie" (escolha documentada no próprio arquivo: build de fonte foi rejeitado para o lab — o pacote da distro instala em ~1min e recebe patches via apt) |
-| `docker-entrypoint.sh` | Gera `ari_secret.conf` a partir de `ARI_USERNAME`/`ARI_PASSWORD` (configs do Asterisk não expandem env vars) |
-| `pjsip.conf` | Transportes udp/tcp e exemplo wss; template de trunk ITSP; endpoint de teste `6001`. **chan_pjsip apenas** — chan_sip foi removido do Asterisk 21+ |
+| `Dockerfile` | Asterisk 22 LTS via pacote do Debian 13 "trixie" (escolha documentada no próprio arquivo: build de fonte foi rejeitado para o lab — o pacote da distro instala em ~1min e recebe patches via apt). Asserta a presença de `res_config_pgsql.so` |
+| `docker-entrypoint.sh` | Gera `ari_secret.conf` (env `ARI_*`) e `res_pgsql.conf` (env `PGSQL_*`) — configs do Asterisk não expandem env vars |
+| `pjsip.conf` | SÓ transportes (udp/tcp/wss). Troncos e ramais vivem no **PostgreSQL** (realtime, ver abaixo). **chan_pjsip apenas** — chan_sip foi removido do Asterisk 21+ |
+| `extconfig.conf` | Mapeia famílias `ps_*` → driver `pgsql` (ARA) |
+| `sorcery.conf` | Objetos PJSIP (endpoint/auth/aor/contact/identify/registration) → realtime |
+| `modules.conf` | `preload = res_config_pgsql.so` (driver de pé antes do res_pjsip) |
 | `extensions.conf` | Entrada → `Stasis(${GLOBAL(ACTIVE_APP)})` (blue/green); contexto `transfer-owner` para o failover ao celular do dono |
 | `ari.conf` | ARI habilitado; usuário/senha via include gerado pelo entrypoint |
 | `http.conf` | Servidor HTTP 8088: REST+WebSocket do ARI e transporte wss |
 | `rtp.conf` | Range RTP 10000–10200 (casa com o `EXPOSE` do Dockerfile) |
+
+## SIP realtime no PostgreSQL (troncos e ramais sem editar .conf)
+
+Endpoints/auths/aors/identifies/registrations vivem nas tabelas `ps_*` do
+Postgres do stack (schema + seeds em
+`go/internal/store/migrations/0002_asterisk_realtime.sql`; o esquema segue o
+alembic oficial do Asterisk, reduzido). Regras de propagação:
+
+- **Ramais e troncos IP-auth**: `INSERT`/`UPDATE` vale na próxima
+  chamada/registro — **sem reload** (sorcery sem cache de propósito).
+- **`ps_registrations`** (registro outbound, ex.: Callcentric): carregado no
+  boot — após mudar, `docker compose exec asterisk asterisk -rx "pjsip reload"`.
+- Contatos de REGISTER persistem em `ps_contacts` (sobrevivem a restart).
+
+### Adicionar um ramal (ex.: 6002)
+
+```sql
+insert into ps_auths (id, auth_type, username, password)
+  values ('6002-auth','userpass','6002','uma-senha');
+insert into ps_aors (id, max_contacts, remove_existing)
+  values ('6002', 1, 'yes');
+insert into ps_endpoints (id, transport, context, disallow, allow, auth, aors,
+                          dtmf_mode, direct_media)
+  values ('6002','transport-udp','from-test','all','slin16,ulaw',
+          '6002-auth','6002','rfc4733','no');
+```
+
+### Tronco Callcentric (registro outbound + entrada autenticada)
+
+```sql
+update ps_auths set username = '17778696496', password = 'SENHA_SIP_DA_EXTENSAO'
+  where id = 'trunk-primary-auth';
+update ps_aors set contact = 'sip:callcentric.com' where id = 'trunk-primary';
+update ps_endpoints set from_user = '17778696496', from_domain = 'callcentric.com'
+  where id = 'trunk-primary';
+update ps_endpoint_id_ips set match = 'callcentric.com'
+  where id = 'trunk-primary-identify';
+insert into ps_registrations (id, transport, outbound_auth, server_uri,
+                              client_uri, retry_interval)
+  values ('trunk-primary-reg','transport-udp','trunk-primary-auth',
+          'sip:callcentric.com','sip:17778696496@callcentric.com',60);
+-- registrations só entram no reload:
+--   docker compose exec asterisk asterisk -rx "pjsip reload"
+```
+
+Diagnóstico: `pjsip show endpoint trunk-primary` (realtime é on-demand — o
+`pjsip show endpoints` sem argumento não lista objetos que nunca foram usados),
+`pjsip show registrations`, `realtime load ps_endpoints id trunk-primary`.
+
+> Volume do Postgres já inicializado não roda a migration 0002 de novo —
+> aplicar manualmente:
+> `docker compose exec -T postgres psql -U frontdesk -d frontdesk < go/internal/store/migrations/0002_asterisk_realtime.sql`
 
 ## Como a mídia flui (External Media do ARI)
 
@@ -64,9 +119,19 @@ PSTN ── ITSP trunk ──▶ canal PJSIP ──▶ Stasis(frontdesk-v1)   [c
 
 ## Subir o lab
 
+O jeito suportado é via compose (o realtime precisa do Postgres do stack):
+
+```sh
+make up PROFILES="--profile asterisk"
+# ou: docker compose --profile asterisk up -d asterisk
+```
+
+Standalone (exige um Postgres alcançável com as tabelas ps_*):
+
 ```sh
 docker build -t frontdesk-asterisk asterisk/
 docker run --rm -e ARI_PASSWORD=changeme \
+  -e PGSQL_HOST=host.docker.internal -e PGSQL_PASSWORD=frontdesk \
   -p 5060:5060/udp -p 8088:8088 -p 10000-10200:10000-10200/udp \
   frontdesk-asterisk
 ```
